@@ -59,6 +59,14 @@ such as `lab01_lakehouse_alex`, to avoid changing someone else's work.
 ## 3. Download the sample CSV
 
 1. Open the [products.csv download link](https://github.com/MicrosoftLearning/dp-data/raw/main/products.csv).
+
+   Alternatively, copy the URL below, paste it into your browser's address bar,
+   and press **Enter** to download the file:
+
+   ```text
+   https://github.com/MicrosoftLearning/dp-data/raw/main/products.csv
+   ```
+
 2. Save the file as `products.csv` in a folder you can find, such as **Downloads**.
    If your browser displays the CSV as text, use **Save as** and keep the `.csv`
    extension. Do not save the page as HTML.

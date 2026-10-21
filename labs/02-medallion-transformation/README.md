@@ -1,8 +1,8 @@
-# Lab 2: Build a medallion transformation notebook
+# Lab 2: Build the medallion Bronze and Silver layers
 
 [Workshop home](../../README.md)
 
-**Estimated time:** 60-75 minutes  
+**Estimated time:** 45-55 minutes  
 **Experience required:** Basic lakehouse concepts and willingness to run introductory Python.
 
 ## What you will learn
@@ -11,7 +11,7 @@
 - Create a Fabric notebook and attach a default lakehouse.
 - Read CSV files into a Spark DataFrame with an explicit schema.
 - Clean and validate data before saving a Silver Delta table.
-- Aggregate Silver data into a Gold table for analysis.
+- Prepare trusted Silver data for the Gold transformations in Lab 4.
 - Compare overwrite, append, and merge, and rerun transformations without duplicate records.
 
 This workshop combines the notebook and DataFrame concepts from
@@ -19,32 +19,34 @@ This workshop combines the notebook and DataFrame concepts from
 with the layered approach in
 [Create a medallion architecture in a Microsoft Fabric lakehouse](https://microsoftlearning.github.io/mslearn-fabric/Instructions/Labs/03b-medallion-lakehouse.html).
 The instructions and notebook cells below form a smaller, workshop-specific
-workflow: one notebook and one Gold aggregate, rather than the reference lab's
-full dimension-and-fact model.
+workflow: Bronze and Silver in this lab, followed by a Gold aggregate in
+[Lab 4](../04-medallion-gold/README.md), rather than the reference lab's full
+dimension-and-fact model. Lab 3 defines a date-dimension DataFrame through a pipeline
+between these stages. All three labs use the same lakehouse but separate notebooks.
 
 ## 1. Understand the medallion architecture
 
-| Layer | Purpose | This lab's implementation |
+| Layer | Purpose | Implementation across Labs 2-4 |
 | --- | --- | --- |
-| Bronze | Preserve source data so it can be inspected and reprocessed. | Three unchanged CSV files under `Files/bronze/orders`. |
+| Bronze | Preserve source data so it can be inspected and reprocessed. | Three unchanged CSV files under `Files/bronze`. |
 | Silver | Provide clean, typed, validated detail records. | Delta table `dbo.sales_silver`, one row per order line. |
-| Gold | Shape trusted data for a business question. | Delta table `dbo.daily_product_sales_gold`, one row per date and product. |
+| Gold | Shape trusted data for a business question. | In Lab 4: Delta table `gold.quarterly_product_sales_gold`, one row per year, quarter, and product, using `gold.date_dimension` created in that lab. |
 
 ```text
-Files/bronze/orders/*.csv
+Files/bronze/*.csv
           |
           | Read, clean, validate, deduplicate
           v
 Tables/dbo/sales_silver
           |
-          | Group by order date and product
+          | Join date_dimension; group by year, quarter, and product
           v
-Tables/dbo/daily_product_sales_gold
+Tables/gold/quarterly_product_sales_gold
 ```
 
 Bronze, Silver, and Gold describe increasing data quality and business readiness,
 not three mandatory file formats. This lab uses raw files for Bronze and Delta
-tables for Silver and Gold. A single lakehouse keeps the exercise manageable;
+tables for Silver and, in Lab 4, Gold. A single lakehouse keeps the exercise manageable;
 larger solutions can separate layers into different lakehouses or workspaces.
 
 ## 2. Prepare your workspace and source files
@@ -57,22 +59,25 @@ permission to write to your lakehouse, create a notebook, and run Spark.
 2. Download [orders.zip](https://github.com/MicrosoftLearning/dp-data/raw/main/orders.zip)
    and extract it locally. Expect `2019.csv`, `2020.csv`, and `2021.csv`.
 
+   Alternatively, copy the URL below, paste it into your browser's address bar,
+   and press **Enter** to download the ZIP file. Extract it after downloading:
+
+   ```text
+   https://github.com/MicrosoftLearning/dp-data/raw/main/orders.zip
+   ```
+
    ![File Explorer showing the extracted 2019, 2020, and 2021 CSV files alongside the orders ZIP archive](../../screenshot/extract_locally.png)
 
-3. Under **Files**, create a `bronze` folder, then an `orders` subfolder.
+3. Under **Files**, create a `bronze` folder.
 
    ![Files menu showing the New subfolder option](../../screenshot/create_subfolder.png)
 
    ![New subfolder dialog with bronze entered as the folder name](../../screenshot/create_bronze.png)
 
-   ![Bronze folder context menu showing the New subfolder option](../../screenshot/another_subfolder.png)
-
-   ![New subfolder dialog with orders entered as the folder name](../../screenshot/create_orders.png)
-
-4. Upload the three CSV files into **Files > bronze > orders**.
+4. Upload the three CSV files directly into **Files > bronze**.
    Upload the extracted CSVs, not the ZIP file.
 
-   ![Upload files pane targeting Files/bronze/orders with the 2019, 2020, and 2021 CSV files selected](../../screenshot/upload_orders.png)
+   ![Upload files pane targeting Files/bronze with the 2019, 2020, and 2021 CSV files selected in the file picker](../../screenshot/upload_bronze.png)
 
 5. Confirm all three filenames before continuing.
 
@@ -83,7 +88,7 @@ header row**; the first line is a record. Product names can contain quoted
 commas, so do not edit or resave the files in a spreadsheet.
 
 **Checkpoint:** Your reused lakehouse contains exactly the three order CSV files
-under `Files/bronze/orders`.
+directly under `Files/bronze`.
 
 ## 3. Create and configure the notebook
 
@@ -108,7 +113,7 @@ under `Files/bronze/orders`.
 
 4. In the notebook explorer's **Data items** tab, select **Add data items** >
    **From OneLake catalog**, then select and add the existing **Sales_Lakehouse**
-   you created earlier, containing `Files/bronze/orders`. If you used a
+   you created earlier, containing `Files/bronze`. If you used a
    different lakehouse name, select that lakehouse instead.
 
    ![Notebook explorer showing Add data items and the From OneLake catalog option](../../screenshot/add_lakehouse.png)
@@ -119,7 +124,7 @@ under `Files/bronze/orders`.
    open its **...** menu and select **Set as default lakehouse**.
    If you change the default after starting Spark, restart the session.
 
-   ![Notebook explorer showing Sales_Lakehouse attached with the bronze/orders folder and all three CSV files](../../screenshot/confirm_lakehouse.png)
+   ![Notebook explorer showing Sales_Lakehouse pinned as the default lakehouse, the Set as default lakehouse menu option, and the three CSV files in bronze](../../screenshot/confirm_default.png)
 
 6. Keep the default code language as **PySpark (Python)**.
 
@@ -150,24 +155,26 @@ under `Files/bronze/orders`.
    # Medallion transformation workflow
 
    Transform raw Bronze order files into a validated Silver Delta table,
-   then aggregate daily product sales into a business-ready Gold Delta table.
+   then join a date dimension and aggregate quarterly product sales into Gold.
 
    ```text
-   Files/bronze/orders/*.csv
+   Files/bronze/*.csv
              |
              | Read, clean, validate, deduplicate
              v
    Tables/dbo/sales_silver
              |
-             | Group by order date and product
+             | Join date_dimension; group by year, quarter, and product
              v
-   Tables/dbo/daily_product_sales_gold
+   Tables/gold/quarterly_product_sales_gold
    ```
    ````
 
    ![Notebook cell containing the medallion workflow text with the Convert to Markdown button highlighted](../../screenshot/create_markdown.png)
 
-   The rendered Markdown cell should look like this:
+   The rendered Markdown cell should look like this. The screenshot shows the
+   earlier folder layout and daily example; use the updated Bronze path and
+   quarterly workflow in the copyable text above:
 
    ![Rendered Markdown cell showing the medallion transformation heading, description, and Bronze to Silver to Gold workflow diagram](../../screenshot/rendered_markdown.png)
 
@@ -180,35 +187,6 @@ under `Files/bronze/orders`.
 This notebook keeps configuration, transformations,
 checks, and outputs together. Save it so you can rerun or share the workflow
 with authorized colleagues.
-
-### Parameter cell
-
-1. Add a separate **PySpark (Python)** code cell at the top of the notebook,
-   before the configuration and transformation cells.
-2. Copy the following default parameter into it:
-
-   ```python
-   # Enable optional Silver previews when troubleshooting; keep False in production.
-   debug = False
-   ```
-
-3. Open this cell's **...** menu and select **Toggle parameter cell**.
-   Fabric marks it as the notebook's parameter cell.
-
-   ![Notebook cell menu with the ellipsis and Toggle parameter cell option highlighted](../../screenshot/toggle_parameter_cell.png)
-
-   Confirm that **Parameters** appears beside **PySpark (Python)** at the
-   bottom of the cell:
-
-   ![Notebook cell footer showing PySpark (Python) and the Parameters label](../../screenshot/confirm_parameters.png)
-
-4. Run this cell before running the configuration cell. Use Python Boolean
-   values `True` and `False`, not quoted strings.
-
-A parameter cell is still a PySpark code cell; marking it as a parameter cell
-does not change its language. It identifies default values that a supported
-notebook invocation, such as a pipeline Notebook activity, can override.
-For this interactive lab, edit `debug` here and use **Run all** to apply it.
 
 ### Configuration cell
 
@@ -224,11 +202,10 @@ to the left of the cell or use a keyboard shortcut:
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# Read all Bronze CSVs and name the Silver and Gold output tables.
-bronze_path = "Files/bronze/orders/*.csv"
-# The *.csv wildcard matches every CSV file in the orders folder.
+# Read all Bronze CSVs and name the Silver output table.
+bronze_path = "Files/bronze/*.csv"
+# The *.csv wildcard matches every CSV file directly in the bronze folder.
 silver_table = "dbo.sales_silver"
-gold_table = "dbo.daily_product_sales_gold"
 
 # Use the nine business columns to identify exact duplicates, excluding metadata.
 order_columns = [
@@ -260,8 +237,10 @@ table output is expected yet.
 
 The explicit schema avoids guessing types. Decimal types preserve the sample's
 four-decimal monetary precision instead of using floating-point amounts.
-For a lakehouse without schemas, remove `dbo.` from both table variables and
+For a lakehouse without schemas, remove `dbo.` from the table variables and
 from the SQL queries later in this guide.
+Lab 3 requires a schema-enabled lakehouse for its separate `gold` schema, so
+confirm that prerequisite with the facilitator if you plan to continue.
 
 **Checkpoint:** The notebook is attached to your own lakehouse and the
 configuration cell runs successfully.
@@ -419,7 +398,7 @@ if conflicts_df.count():
     display(conflicts_df.limit(20))
     raise ValueError("Conflicting records share an order-line key. Resolve them before writing Silver.")
 
-# Calculate sales before tax and record when this transformation is evaluated.
+# Calculate sales before tax, record processing time, and add an integer YYYYMMDD date key.
 silver_df = (
     silver_df
     .withColumn(
@@ -427,8 +406,16 @@ silver_df = (
         (F.col("Quantity") * F.col("UnitPrice")).cast("decimal(18,4)"),
     )
     .withColumn("ProcessedAt", F.current_timestamp())
+    .withColumn(
+        "date_id", F.date_format(F.col("OrderDate"), "yyyyMMdd").cast(T.IntegerType())
+    )
 )
 ```
+
+The final transformation adds an integer `date_id` in **YYYYMMDD** format:
+for example, `2019-01-01` becomes `20190101`. Keep `OrderDate` as a date column;
+the new key will be saved with Silver and used to join the date dimension in
+Lab 4.
 
 Exact duplicates are compared using the nine business columns, not `SourceFile`.
 Different records with the same order-line key stop the workflow rather than
@@ -437,53 +424,42 @@ quarantine table; this introductory notebook stops and shows them explicitly.
 
 ![Validation and deduplication output showing zero exact duplicate records removed](../../screenshot/deduplication_output.png)
 
-### Hack: Toggle diagnostic previews with a debug parameter
-
-The separate parameter cell at the top defines a Boolean parameter, `debug`, set to
-`False`. Instead of adding and removing display calls when troubleshooting,
-use this one switch to control optional Silver previews:
-
-- **`debug = True`:** Display `silver_df` instead of writing the Silver table.
-- **`debug = False`:** Write Silver without displaying its records. Keep this
-  setting in production to avoid unnecessary record output.
-
-If a downstream pipeline or report contains unexpected data, change `debug` to
-`True` at the top and run the notebook only through the Silver cell below.
-You can inspect Silver without changing its destination table or editing
-individual display calls. After investigating, set it back to `False` and
-use **Run all** to refresh both Silver and Gold.
-
-**Important:** In debug mode, stop after the Silver preview. The Gold cells
-read the persisted Silver table, which may be missing or contain older data
-when the Silver write is skipped. This switch does not disable Gold writes.
-Validation checks and explicit error diagnostics remain active regardless of
-the setting. A displayed preview is not proof that the entire dataset is correct.
-
 ### Persist Silver as Delta
 
-**Write scope:** The next cells replace the two configured output tables.
+**Write scope:** This lab writes the configured Silver table. The initial
+Silver example replaces its output; the later MERGE updates or inserts matching
+keys. Lab 3 previews or saves a date dimension in `dbo` through a separate
+notebook and pipeline; Lab 4 persists its date dimension and aggregate in `gold`.
 Use only your own lakehouse. Preserve unrelated tables and do not point the
 notebook at shared or production tables.
 
 ```python
-# Preview in debug mode; otherwise persist and verify the Silver output.
-if debug:
-    display(silver_df)
-else:
-    # Rebuild the snapshot instead of appending rows on each run.
-    silver_df.write.format("delta").mode("overwrite").saveAsTable(silver_table)
+# Rebuild the snapshot instead of appending rows on each run.
+(
+    silver_df.write.format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(silver_table)
+)
 
-    # Read back the saved table and verify that all validated rows were written.
-    saved_silver_count = spark.table(silver_table).count()
-    if saved_silver_count != silver_count:
-        raise ValueError("Saved Silver count does not match the validated DataFrame.")
+# Read back the saved table and verify that all validated rows were written.
+saved_silver_count = spark.table(silver_table).count()
+if saved_silver_count != silver_count:
+    raise ValueError("Saved Silver count does not match the validated DataFrame.")
 
-    print(f"Saved Silver rows: {saved_silver_count}")
+print(f"Saved Silver rows: {saved_silver_count}")
 ```
 
-### Check before moving to Exercise 3
+**Updating an earlier version of Silver:** If your existing table does not
+have `date_id`, rerun the updated transformations and this overwrite cell once.
+`overwriteSchema` replaces the lab table's schema as well as its snapshot.
+This also removes target-only rows such as the synthetic MERGE example.
+Then return to using only the MERGE cell and rerun the two-row mini-exercise
+if needed. Do not leave both overwrite and MERGE executable for normal reruns.
 
-1. Confirm `debug = False` and that the Silver write cell completed successfully.
+### Check before continuing to Lab 3
+
+1. Confirm that the Silver write cell completed successfully.
 2. In the notebook's lakehouse explorer, open the **...** menu beside
    **Tables** and select **Refresh**.
 
@@ -492,8 +468,8 @@ else:
 3. Expand **Tables > dbo** and confirm **sales_silver** is listed. Without
    schemas, look directly under **Tables**.
 4. Select **sales_silver** and inspect its preview before continuing.
-   If it is missing, confirm the default lakehouse, rerun the parameter cell
-   with `debug = False`, and rerun the Silver write cell, then refresh again.
+   If it is missing, confirm the default lakehouse, rerun the configuration,
+   transformation, and Silver write cells in order, then refresh again.
 
 For the verified sample, Silver contains **32,718** rows with unique
 `SalesOrderNumber` and `SalesOrderLineNumber` pairs.
@@ -517,8 +493,7 @@ reliable key and a source with at most one record per key. Our validation
 already checks the **SalesOrderNumber + SalesOrderLineNumber** key.
 
 1. Add a **new PySpark code cell** immediately after the Silver table check.
-2. Copy the following merge-based write logic into it. Keep `debug = False`
-   to persist data, or `True` to preview without writing.
+2. Copy the following merge-based write logic into it.
 3. After trying the new cell, remove the earlier overwrite code cell from the
    notebook, or convert it to Markdown for reference. Keep only the new Silver
    write cell executable so **Run all** does not overwrite Silver before merging.
@@ -526,46 +501,42 @@ already checks the **SalesOrderNumber + SalesOrderLineNumber** key.
 ```python
 from delta.tables import DeltaTable
 
-# Keep the same preview-or-write behavior as the original Silver cell.
-if debug:
-    display(silver_df)
+if not spark.catalog.tableExists(silver_table):
+    # Bootstrap the Delta table on a first run without replacing existing data.
+    silver_df.write.format("delta").mode("errorifexists").saveAsTable(silver_table)
 else:
-    if not spark.catalog.tableExists(silver_table):
-        # Bootstrap the Delta table on a first run without replacing existing data.
-        silver_df.write.format("delta").mode("errorifexists").saveAsTable(silver_table)
-    else:
-        # Match validated order-line keys, update existing rows, and insert new rows.
-        target = DeltaTable.forName(spark, silver_table)
-        (
-            target.alias("target")
-            .merge(
-                silver_df.alias("source"),
-                "target.SalesOrderNumber = source.SalesOrderNumber "
-                "AND target.SalesOrderLineNumber = source.SalesOrderLineNumber",
-            )
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
-            .execute()
+    # Match validated order-line keys, update existing rows, and insert new rows.
+    target = DeltaTable.forName(spark, silver_table)
+    (
+        target.alias("target")
+        .merge(
+            silver_df.alias("source"),
+            "target.SalesOrderNumber = source.SalesOrderNumber "
+            "AND target.SalesOrderLineNumber = source.SalesOrderLineNumber",
         )
-
-    # Check that the target still has only one row per business key.
-    saved_silver = spark.table(silver_table)
-    duplicate_keys = (
-        saved_silver.groupBy("SalesOrderNumber", "SalesOrderLineNumber")
-        .count()
-        .filter(F.col("count") > 1)
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
     )
-    if duplicate_keys.count():
-        display(duplicate_keys.limit(20))
-        raise ValueError("Silver contains duplicate order-line keys. Investigate before building Gold.")
 
-    print(f"Saved Silver rows after MERGE: {saved_silver.count()}")
+# Check that the target still has only one row per business key.
+saved_silver = spark.table(silver_table)
+duplicate_keys = (
+    saved_silver.groupBy("SalesOrderNumber", "SalesOrderLineNumber")
+    .count()
+    .filter(F.col("count") > 1)
+)
+if duplicate_keys.count():
+    display(duplicate_keys.limit(20))
+    raise ValueError("Silver contains duplicate order-line keys. Investigate before building Gold.")
+
+print(f"Saved Silver rows after MERGE: {saved_silver.count()}")
 ```
 
-4. Run the new cell twice with `debug = False`. For the unchanged workshop
+4. Run the new cell twice. For the unchanged workshop
    sample, expect **32,718** rows after each run and no duplicate keys.
 5. Refresh **Tables** again and confirm `sales_silver` is still available
-   before moving to Exercise 3.
+   before continuing to Lab 3.
 
 This merge updates all matching columns, including `ProcessedAt`, so reruns can
 create new Delta versions even when business values are unchanged. It does not
@@ -580,14 +551,10 @@ Add a new PySpark cell after the merge cell. Create a two-row DataFrame named
 order line with a new order number. A DataFrame is sufficient here; you do not
 need to save a separate staging table.
 
-Set `debug = False` and run the parameter cell before this exercise, because
-the goal is to test a real write.
+This exercise performs a real write to the Silver table.
 
 ```python
 from delta.tables import DeltaTable
-
-if debug:
-    raise ValueError("Set debug = False and rerun the parameter cell to test the merge.")
 
 # Reserve a recognizable order number so reruns update the same demo record.
 demo_order = "LAB02-MERGE-001"
@@ -651,185 +618,18 @@ demo key now exists.
 
 The synthetic row is not added to Bronze. The main Silver merge retains it
 because that merge does not delete target rows absent from its source.
-Gold will include this extra line in its totals when you run Exercise 3; its
+Gold will include this extra line in its totals when you complete Lab 4; its
 date and product are copied from an existing group, so the number of Gold
 groups should remain unchanged.
 
-## 6. Exercise 3: Build a business-ready Gold aggregate
-
-**Business question:** For each day and product, how many units were sold and
-what was the sales amount before tax?
-
-Before continuing, set `debug = False` and rerun the parameter and Silver cells
-so that the persisted Silver table contains your latest transformed data.
-
-Read the persisted Silver table, rather than relying on an in-memory DataFrame,
-and aggregate at the **OrderDate + Item** grain:
-
-```python
-# Use persisted Silver as the trusted input for the Gold transformation.
-silver_source = spark.table(silver_table)
-# Produce one summary per date and product, with line counts and additive totals.
-gold_df = (
-    silver_source.groupBy("OrderDate", "Item")
-    .agg(
-        F.count("*").alias("OrderLineCount"),
-        F.sum("Quantity").alias("UnitsSold"),
-        F.sum("LineAmount").alias("SalesAmount"),
-        F.sum("Tax").alias("TaxAmount"),
-    )
-)
-
-# Replace the lab's Gold snapshot so reruns do not accumulate duplicate summaries.
-gold_df.write.format("delta").mode("overwrite").saveAsTable(gold_table)
-
-# Preview the highest-sales daily product groups from the saved Gold table.
-gold_saved = spark.table(gold_table)
-display(
-    gold_saved.orderBy(F.col("SalesAmount").desc(), "OrderDate", "Item").limit(10)
-)
-print(f"Gold rows: {gold_saved.count()}")
-```
-
-`SalesAmount` is quantity times unit price, excluding tax. `TaxAmount` sums
-the source's line-level tax; do not multiply tax by quantity again.
-
-For the verified sample, expect **14,386** daily-product groups. Gold has fewer
-rows because each record summarizes multiple order lines where applicable.
-It intentionally omits customer names and email addresses.
-
-### Reconcile Gold with Silver
-
-```python
-# Compute baseline totals from the detailed Silver order lines.
-silver_totals = silver_source.agg(
-    F.count("*").alias("OrderLineCount"),
-    F.sum("Quantity").alias("UnitsSold"),
-    F.sum("LineAmount").alias("SalesAmount"),
-    F.sum("Tax").alias("TaxAmount"),
-).first()
-
-# Sum Gold's stored line counts, not its number of aggregated rows.
-gold_totals = gold_saved.agg(
-    F.sum("OrderLineCount").alias("OrderLineCount"),
-    F.sum("UnitsSold").alias("UnitsSold"),
-    F.sum("SalesAmount").alias("SalesAmount"),
-    F.sum("TaxAmount").alias("TaxAmount"),
-).first()
-
-# Require all four measures to match; raise an error if aggregation lost data.
-if silver_totals.asDict() != gold_totals.asDict():
-    raise ValueError(f"Reconciliation failed: Silver={silver_totals}, Gold={gold_totals}")
-
-print("Reconciliation passed: line counts, units, sales, and tax match.")
-```
-
-**Checkpoint:** Gold is a Delta table whose totals reconcile with Silver.
-Gold's row count is not expected to equal Silver's row count.
-
-## 7. Exercise 4: Query and visualize Gold
-
-1. Add a new notebook code cell.
-2. Use `%%sql` as the first line to switch that cell from Python to Spark SQL:
-
-   ```sql
-   %%sql
-   -- Summarize daily Gold records into total units and sales for each product.
-   SELECT
-       Item,
-       SUM(UnitsSold) AS units_sold,
-       SUM(SalesAmount) AS sales_amount
-   FROM dbo.daily_product_sales_gold
-   GROUP BY Item
-   -- Return the ten highest-sales products, using Item to break ties.
-   ORDER BY sales_amount DESC, Item
-   LIMIT 10;
-   ```
-
-   Alternatively, select **Spark SQL** from the cell's language dropdown and
-   omit the `%%sql` line. Confirm the cell footer shows **Spark SQL**:
-
-   ![Notebook cell language dropdown showing Spark SQL](../../screenshot/verify_sparksql.png)
-
-3. In the result visualization controls, choose a bar chart with **Item** as
-   the category and **sales_amount** as the value, if charting is available.
-
-   ![Gold query visualization showing units sold by Item and a suggested sales_amount by Item chart](../../screenshot/sales_amount_item_barchart.png)
-
-4. Explain why this query uses Gold instead of repeatedly cleaning the raw CSVs.
-
-You can also query the Gold table from the lakehouse's **SQL analytics
-endpoint** after metadata synchronization. Use T-SQL `TOP (10)` instead of
-Spark SQL `LIMIT 10`, and omit `%%sql` outside the notebook.
-
-## 8. Rerun, save, and share
-
-1. Record the Silver and Gold row counts.
-2. Select **Run all** to execute the notebook from top to bottom.
-3. Confirm both counts are unchanged and reconciliation passes again.
-4. Save the notebook and confirm it appears in your workspace.
-5. Share the notebook only with authorized workshop participants. Recipients
-   also need the appropriate lakehouse permissions and Fabric capacity access.
-
-This notebook recomputes transformations from all Bronze files. Silver begins
-with an **overwrite** example, then switches to a key-based **MERGE**; Gold
-remains a full-refresh overwrite of the persisted Silver data. Reruns do not
-append duplicate rows. Processing
-timestamps and Delta history versions can change even when business data does
-not. The two table writes are separate commits, not one cross-table transaction;
-if a later cell fails, fix the problem and rerun the notebook in order.
-
-Incremental file ingestion, scheduling, and a full star schema are
-next steps, not part of this lab.
-
-## 9. Explain what you built
-
-- What is the grain of each layer?
-- Why is an explicit schema important for a headerless CSV?
-- What belongs in Silver versus Gold?
-- Why validate before overwriting a trusted table?
-- How does this notebook avoid duplicates when rerun?
-- How is notebook code different from a persisted Delta table?
-
-**Completion checklist**
-
-- [ ] Attached the existing lakehouse and created a transformation notebook.
-- [ ] Preserved the three source CSVs in Bronze.
-- [ ] Explored the schema and counts by year.
-- [ ] Cleaned, validated, and saved Silver.
-- [ ] Compared write strategies and replaced the Silver overwrite cell with MERGE.
-- [ ] Built Gold at a defined business grain.
-- [ ] Reconciled Gold totals with Silver.
-- [ ] Queried Gold using notebook Spark SQL.
-- [ ] Reran the notebook without increasing business row counts.
-- [ ] Saved the notebook for reuse.
-
-## Troubleshooting
-
-| Symptom | What to check |
-| --- | --- |
-| Spark session will not start | Confirm active Fabric capacity and workspace permissions with the facilitator. |
-| Bronze path is missing | Confirm the correct default lakehouse and the exact `Files/bronze/orders` folder. |
-| The first order disappears | The CSVs have no header. Use `header=false`. |
-| CSV parse or validation failure | Check that all three files are the original order CSVs, not unrelated files, HTML downloads, or edited spreadsheets. Inspect the reported records. |
-| Conflicting order-line keys | Inspect the records; do not bypass the check or arbitrarily drop conflicting values. |
-| `dbo` cannot be resolved | Use a schema-enabled lakehouse or remove `dbo.` consistently for a lakehouse without schemas. |
-| Python variables are undefined | Run the configuration and earlier cells in order after restarting Spark. |
-| SQL endpoint cannot see a table yet | Allow metadata synchronization, then refresh the endpoint explorer. |
-| Counts increase on rerun | Check that Silver uses the validated-key MERGE and Gold uses overwrite, not append. Check source and target key uniqueness. |
-
 ## Cleanup
 
-Keep the reused lakehouse and notebook if the facilitator plans to reuse them.
-Otherwise, after confirming with the facilitator, remove only your Lab 2
-notebook, `sales_silver` and `daily_product_sales_gold` tables, and
-`Files/bronze/orders` folder. Do not delete the reused lakehouse or unrelated items
-unless the facilitator explicitly confirms they are no longer needed. Do not
-delete the assigned workspace or another participant's items.
+Keep the notebook, Bronze files, and Silver table through Labs 3 and 4. After
+the planned labs, follow the
+[Lab 4 cleanup instructions](../04-medallion-gold/README.md#cleanup)
+only after confirming with the facilitator.
 
-## References
-
-- [Analyze data with Apache Spark in Fabric](https://microsoftlearning.github.io/mslearn-fabric/Instructions/Labs/02-analyze-spark.html)
-- [Create a medallion architecture in a Microsoft Fabric lakehouse](https://microsoftlearning.github.io/mslearn-fabric/Instructions/Labs/03b-medallion-lakehouse.html)
-- [Microsoft Learn: Medallion lakehouse architecture](https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture)
-- [Source data: MicrosoftLearning/dp-data](https://github.com/MicrosoftLearning/dp-data)
+**Lab 2 complete:** Save the notebook and keep your Bronze files and Silver
+table. Create a new notebook in
+[Lab 3: Pipeline basics](../03-pipeline/README.md), then continue to Lab 4 for Gold.
+Do not clean up these shared items before completing all planned labs.
