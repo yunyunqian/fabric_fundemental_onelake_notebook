@@ -141,6 +141,22 @@ not a Delta table, and no `products` table has been created yet.
 
 ## 6. Load the CSV into a Delta table
 
+There are two ways to create a Delta table from the uploaded CSV:
+
+- **Lakehouse UI:** Use **Load to tables** > **New table** to read the CSV and
+  create a Delta table without writing code.
+- **Notebook with PySpark:** Attach the lakehouse to a notebook, read the CSV
+  with `spark.read.csv(...)`, and write the DataFrame as a Delta table with
+  `.write.format("delta").saveAsTable(...)`. This approach lets you transform
+  or validate the data before saving it.
+
+Both approaches create a separate Delta table and leave the uploaded CSV
+unchanged. **Choose either section A or section B. You only need to complete
+the load once.** Both options create the `products` table used in the remaining
+exercises.
+
+### A. Load to tables through the UI
+
 1. Open the **...** menu next to `products.csv`.
 2. Select **Load to tables** > **New table**.
 
@@ -166,7 +182,7 @@ not a Delta table, and no `products` table has been created yet.
 
 5. Expand or refresh **Tables**. If schemas are enabled, expand **dbo**.
 
-   ![Tables menu with the ellipsis and Refresh option highlighted](../../screenshot/refresh_tables.png)
+   ![dbo schema menu with the ellipsis and Refresh option highlighted](../../screenshot/refresh_tables.png)
 
 6. Select the new `products` table to preview its data.
 
@@ -181,6 +197,72 @@ name in the validation query below. Do not overwrite someone else's table.
 
 **Checkpoint:** You can see both the source CSV under **Files** and the new
 table under **Tables**.
+
+If you completed section A, skip section B and continue to section 7.
+
+### B. Create a Delta table with a PySpark notebook
+
+1. From the lakehouse, open **Analyze data with** at the top, select
+   **Notebook** > **New notebook**.
+
+   ![Create a new notebook from the lakehouse Analyze data with menu](../../screenshot/lab01_analyze_new_notebook.png)
+
+2. The notebook created this way automatically has the lakehouse attached
+   in the **Explorer** on the left. Confirm it is your lab lakehouse and is
+   pinned as the **default lakehouse**. Expand **Files** and check that
+   `products.csv` is present. This is the file the notebook will read.
+
+   ![Notebook Explorer showing the attached default lakehouse and products.csv under Files](../../screenshot/verify_lakehouise.png)
+
+3. In a **PySpark (Python)** code cell, paste and run:
+
+   ```python
+   # Read the uploaded CSV, using its header and inferring column types.
+   products_df = (
+       spark.read
+       .option("header", "true")
+       .option("inferSchema", "true")
+       .csv("Files/products.csv")
+   )
+
+   # Preview the source data before writing the table.
+   display(products_df)
+
+   # Create a Delta table; fail rather than append or overwrite if it exists.
+   (
+       products_df.write
+       .format("delta")
+       .mode("errorifexists")
+       .saveAsTable("dbo.products")
+   )
+   ```
+
+   ![Successfully executed PySpark cell and products data preview](../../screenshot/run_pyspark.png)
+
+   `header` uses the first CSV row as column names. `inferSchema` asks Spark
+   to infer column types from the data. For production workloads, an explicit
+   schema gives you more control over types.
+
+   This creates the `products` Delta table from the uploaded CSV.
+   `errorifexists` stops the write if
+   the destination already exists; it does not append or overwrite data.
+   If you already completed section A, skip this cell. If you need a retry
+   table, choose a new name and use it in the remaining queries.
+
+4. Save the notebook. Return to the lakehouse, refresh **Tables**, expand
+   **dbo**, and preview `products`. You can also refresh from the **...**
+   menu beside **dbo** in the notebook's lakehouse Explorer.
+
+   ![Refresh the dbo schema from the notebook lakehouse Explorer](../../screenshot/refresh_tables.png)
+
+   After refreshing, expand **dbo** and confirm the `products` Delta table appears.
+
+   ![Products Delta table visible under Tables > dbo](../../screenshot/verify_csv.png)
+
+**Checkpoint:** The `products` Delta table contains 295 source rows, and the
+original CSV remains under **Files**.
+
+Continue to section 7 using the `products` table created by your chosen approach.
 
 ## 7. Analyze data with lakehouse
 
@@ -549,6 +631,7 @@ transformation**.
 Keep the lakehouse if the facilitator plans to reuse it in later labs.
 Otherwise, delete only the lakehouse you created after confirming with the
 facilitator. Do not delete a shared workspace or another participant's items.
+Keep or remove the notebook you created in section B as directed by the facilitator.
 You can remove your local CSV download after the workshop.
 
 ## References
